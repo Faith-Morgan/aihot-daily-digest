@@ -44,6 +44,19 @@ CHUNK_LIMIT = 3500
 # 去重状态最多保留的条目数，防止文件无限增长
 MAX_STATE_IDS = 500
 
+# 最大拆分份数（硬上限：无论怎么配置都绝不超出 5 份）。
+# 可通过环境变量 MAX_CHUNKS 覆盖，但值会被强制夹取到 [1, 5] 区间，
+# 防止误配置把日报拆成几十片、触发各通道限流或超长。
+def _resolve_max_chunks() -> int:
+    try:
+        raw = int(os.environ.get("MAX_CHUNKS", "5"))
+    except (TypeError, ValueError):
+        raw = 5
+    return max(1, min(raw, 5))
+
+
+MAX_CHUNKS = _resolve_max_chunks()
+
 HTTP_TIMEOUT = 20
 
 CATEGORY_CN = {
@@ -226,28 +239,65 @@ def build_blocks(items: list[dict], topics: list[dict]) -> tuple[str, list[str]]
     return header, blocks
 
 
-def pack_chunks(header: str, blocks: list[str], limit: int = CHUNK_LIMIT) -> list[str]:
-    """贪心装箱：按字节打包，绝不切断单个块。"""
-    chunks: list[str] = []
+def _padded_header_len(header: str) -> int:
+    """标题行 + 页脚 "（x/y）" 占位的字节开销，供分片预算估算。"""
+    return bytelen(header) + 60
+
+
+def pack_chunks(header: str, blocks: list[str], limit: int = CHUNK_LIMIT,
+                 max_chunks: int = MAX_CHUNKS) -> list[str]:
+    """动态分片：份数由当日内容的数据量决定，但总份数不超过 max_chunks（默认 5）。
+
+    规则：
+    1. 按字节估算"最少需要几份"才能把每片压在平台单边上限 limit 内；
+    2. 实际份数 = min(需要份数, max_chunks) —— 绝不写死为 1/2/3；
+    3. 用均衡切分把块分配到这些份里，保持原顺序、绝不切断任何单条块；
+    4. 兜底：若因内容过大被 max_chunks 上限夹取后段数仍偏多，尾部自动合并
+       收敛到 max_chunks 份以内（此时单份可能超过 limit，属用户设定的硬上限场景）。
+    """
+    if not blocks:
+        return []
+
+    # 1) 估算需要的份数（含标题/页脚字节开销）
+    overhead = _padded_header_len(header)
+    content_bytes = sum(bytelen(b) + 2 for b in blocks)
+    needed = max(1, -(-(overhead + content_bytes) // limit))  # ceil 除法
+    count = min(needed, max_chunks)
+
+    # 2) 将块均衡切成 count 段（按累积字节体积封口，保持原顺序）
+    sizes = [bytelen(b) + 2 for b in blocks]
+    total = sum(sizes)
+    target = total / count  # 每段目标字节
+    chunks: list[list[str]] = []
     cur: list[str] = []
-    # 预留页脚 "(n/m)" 等占位
-    budget = limit - bytelen(header) - 60
-
     cur_size = 0
-    for b in blocks:
-        bsize = bytelen(b) + 2  # 块间空行
-        if cur and cur_size + bsize > budget:
-            chunks.append("\n\n".join(cur))
-            cur, cur_size = [], 0
+    remaining = count
+    for i, b in enumerate(blocks):
         cur.append(b)
-        cur_size += bsize
+        cur_size += sizes[i]
+        blocks_left = len(blocks) - (i + 1)
+        # 当前段达到平均目标、且后续还有足够块填满剩余段 -> 封口；
+        # remaining == 1 时（最后一段）不提前封口，由循环后的兜底收尾
+        if remaining > 1 and cur_size >= target and blocks_left >= (remaining - 1):
+            chunks.append(cur)
+            cur, cur_size = [], 0
+            remaining -= 1
     if cur:
-        chunks.append("\n\n".join(cur))
+        chunks.append(cur)
 
-    total = len(chunks)
+    # 3) 兜底合并，确保绝不超过 max_chunks 份
+    while len(chunks) > max_chunks:
+        last = chunks.pop()
+        if chunks:
+            chunks[-1] = chunks[-1] + last
+        else:
+            chunks.append(last)
+
+    total_chunks = len(chunks)
     out = []
-    for idx, body in enumerate(chunks, 1):
-        suffix = f"（{idx}/{total}）" if total > 1 else ""
+    for idx, blk in enumerate(chunks, 1):
+        suffix = f"（{idx}/{total_chunks}）" if total_chunks > 1 else ""
+        body = "\n\n".join(blk)
         out.append(f"{header}{suffix}\n\n{body}")
     return out
 

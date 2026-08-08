@@ -1,0 +1,44 @@
+name: AI 热点日报
+
+on:
+  schedule:
+    # UTC 00:27 = 北京时间 08:27
+    # 刻意避开整点：GitHub 定时任务在整点高峰会延迟，极端负载下排队任务甚至会被丢弃
+    - cron: "27 0 * * *"
+  workflow_dispatch: # 支持在 Actions 页面手动触发
+
+# 只需要写权限来回写去重状态文件，用内置 GITHUB_TOKEN 即可。
+# 不要用 PAT：GITHUB_TOKEN 产生的 push 不会再触发 workflow，天然防递归。
+permissions:
+  contents: write
+
+concurrency:
+  group: aihot-daily
+  cancel-in-progress: false
+
+jobs:
+  push:
+    runs-on: ubuntu-latest # 私有仓库计费倍率 x1，勿用 macOS/Windows
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 抓取并推送
+        env:
+          PUSH_CHANNEL: ${{ vars.PUSH_CHANNEL || 'serverchan' }}
+          WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+          SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
+        # ubuntu-latest 预装 Python 3，脚本只用标准库，无需 setup-python / pip install
+        run: python3 scripts/aihot_daily.py
+
+      - name: 回写去重状态
+        if: success()
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/pushed_ids.json
+          # 无变更时前半句成功，短路跳过 commit，不会让 workflow 报红
+          git diff --staged --quiet || git commit -m "chore: 更新推送记录 [skip ci]"
+          git push

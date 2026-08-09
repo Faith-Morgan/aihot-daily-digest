@@ -2,9 +2,9 @@ name: AI 热点日报
 
 on:
   schedule:
-    # UTC 00:27 = 北京时间 08:27
+    # UTC 00:30 = 北京时间 08:30
     # 刻意避开整点：GitHub 定时任务在整点高峰会延迟，极端负载下排队任务甚至会被丢弃
-    - cron: "27 0 * * *"
+    - cron: "30 0 * * *"
   workflow_dispatch: # 支持在 Actions 页面手动触发
 
 # 只需要写权限来回写去重状态文件，用内置 GITHUB_TOKEN 即可。
@@ -26,10 +26,8 @@ jobs:
 
       - name: 抓取并推送
         env:
-          PUSH_CHANNEL: ${{ vars.PUSH_CHANNEL || 'serverchan' }}
+          PUSH_CHANNEL: ${{ vars.PUSH_CHANNEL || 'wecom' }}
           WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
-          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
-          SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
         # ubuntu-latest 预装 Python 3，脚本只用标准库，无需 setup-python / pip install
         run: python3 scripts/aihot_daily.py
 

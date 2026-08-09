@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import os
 import sys
 import time
@@ -348,74 +347,20 @@ def send_wecom(webhook: str, content: str, msgtype: str = "markdown") -> None:
     raise RuntimeError(f"网络重试耗尽: {last_err}")
 
 
-def send_pushplus(token: str, title: str, content: str) -> None:
-    r = _post_json(
-        "https://www.pushplus.plus/send",
-        {"token": token, "title": title, "content": content, "template": "markdown"},
-    )
-    if r.get("code") != 200:
-        raise RuntimeError(f"PushPlus 拒绝: {r}")
-
-
-def send_serverchan(sendkey: str, title: str, content: str) -> None:
-    r = _post_json(
-        f"https://sctapi.ftqq.com/{sendkey}.send",
-        {"title": title, "desp": content},
-    )
-    if r.get("code") != 0:
-        raise RuntimeError(f"Server酱拒绝: {r}")
-
-
-_WECOM_FONT_RE = re.compile(r"</?font[^>]*>")
-
-
-def strip_wecom_tags(s: str) -> str:
-    """企微支持 <font color> 标签，但 PushPlus/Server酱 是纯 markdown，不支持 HTML。
-    非企微通道推送前剥离，避免标签原样显示。"""
-    return _WECOM_FONT_RE.sub("", s)
-
-
 def dispatch(chunks: list[str], title: str) -> None:
-    """按 PUSH_CHANNEL 分发。默认企业微信群机器人。"""
+    """推送当日日报到企业微信群机器人（唯一通道）。"""
     channel = (os.environ.get("PUSH_CHANNEL") or "wecom").strip().lower()
+    if channel != "wecom":
+        log(f"[warn] 仅支持企业微信通道，忽略 PUSH_CHANNEL={channel!r}")
 
-    if channel == "wecom":
-        hook = os.environ.get("WECOM_WEBHOOK", "").strip()
-        if not hook:
-            raise RuntimeError("缺少环境变量 WECOM_WEBHOOK")
-        for i, c in enumerate(chunks, 1):
-            send_wecom(hook, c)
-            log(f"[push] 企微第 {i}/{len(chunks)} 片已发送（{bytelen(c)} 字节）")
-            if i < len(chunks):
-                time.sleep(1)  # 保证群内消息顺序，限流 20 条/分钟无压力
-
-    elif channel == "pushplus":
-        token = os.environ.get("PUSHPLUS_TOKEN", "").strip()
-        if not token:
-            raise RuntimeError("缺少环境变量 PUSHPLUS_TOKEN")
-        # PushPlus 渲染 markdown 但不支持企微专属 <font> 标签，先剥离
-        content = strip_wecom_tags("\n\n".join(chunks))
-        send_pushplus(token, title, content)
-        log("[push] PushPlus 已发送")
-
-    elif channel == "serverchan":
-        key = os.environ.get("SERVERCHAN_SENDKEY", "").strip()
-        if not key:
-            raise RuntimeError("缺少环境变量 SERVERCHAN_SENDKEY")
-        # Server酱免费版走微信服务号，单条长消息在卡片预览里会被截断，
-        # 且 desp 与企微不同（上限 32KB，不在 4096 字节这关），
-        # 因此每条拆成独立消息发送，保证每一"片"都独立到达、不被吞掉。
-        n = len(chunks)
-        for i, c in enumerate(chunks, 1):
-            content = strip_wecom_tags(c)
-            part_title = f"{title}（{i}/{n}）" if n > 1 else title
-            send_serverchan(key, part_title, content)
-            log(f"[push] Server酱第 {i}/{n} 片已发送（{bytelen(c)} 字节）")
-            if i < n:
-                time.sleep(1)  # 保证顺序，且免费版限流宽松（50 条/分钟）
-
-    else:
-        raise RuntimeError(f"未知 PUSH_CHANNEL: {channel}")
+    hook = os.environ.get("WECOM_WEBHOOK", "").strip()
+    if not hook:
+        raise RuntimeError("缺少环境变量 WECOM_WEBHOOK")
+    for i, c in enumerate(chunks, 1):
+        send_wecom(hook, c)
+        log(f"[push] 企微第 {i}/{len(chunks)} 片已发送（{bytelen(c)} 字节）")
+        if i < len(chunks):
+            time.sleep(1)  # 保证群内消息顺序，限流 20 条/分钟无压力
 
 
 def alert_failure(err: str) -> None:

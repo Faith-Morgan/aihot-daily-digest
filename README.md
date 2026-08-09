@@ -21,7 +21,7 @@
 
 ### 2. 建仓库并配置
 
-1. 把本目录内容推到 GitHub 私有仓库
+1. 把本目录内容推到 GitHub 仓库（公开或私有均可）
 2. 仓库 → Settings → Secrets and variables → Actions
    - **Secrets** → New repository secret：`WECOM_WEBHOOK` = 你的 Webhook 整条地址
    - **Variables** 不用动（workflow 默认就是 `wecom`）
@@ -85,7 +85,11 @@ MAX_CHUNKS=9   # 会被夹取到 5，不会真的拆成 9 片
 
 ## 费用
 
-私有仓库 GitHub Free 每月 2000 分钟。每天 1 次 × 约 1 分钟 ≈ 31 分钟/月，用掉 1.5%。
+GitHub Actions 对**公开仓库免费且不限时长**；私有仓库 Free 套餐每月 2000 分钟。本任务每天 1 次 × 约 1 分钟，无论公私都几乎无成本。
+
+## 开源协议
+
+本项目以 [MIT License](./LICENSE) 发布。日报内容来自 [AI HOT](https://aihot.virxact.com)，第三方原文版权归原作者所有；转载或二次分发请遵守各来源站点协议。
 
 ## 目录
 

@@ -43,19 +43,6 @@ CHUNK_LIMIT = 3500
 # 去重状态最多保留的条目数，防止文件无限增长
 MAX_STATE_IDS = 500
 
-# 最大拆分份数（硬上限：无论怎么配置都绝不超出 5 份）。
-# 可通过环境变量 MAX_CHUNKS 覆盖，但值会被强制夹取到 [1, 5] 区间，
-# 防止误配置把日报拆成几十片、触发各通道限流或超长。
-def _resolve_max_chunks() -> int:
-    try:
-        raw = int(os.environ.get("MAX_CHUNKS", "5"))
-    except (TypeError, ValueError):
-        raw = 5
-    return max(1, min(raw, 5))
-
-
-MAX_CHUNKS = _resolve_max_chunks()
-
 HTTP_TIMEOUT = 20
 
 CATEGORY_CN = {
@@ -238,59 +225,33 @@ def build_blocks(items: list[dict], topics: list[dict]) -> tuple[str, list[str]]
     return header, blocks
 
 
-def _padded_header_len(header: str) -> int:
-    """标题行 + 页脚 "（x/y）" 占位的字节开销，供分片预算估算。"""
-    return bytelen(header) + 60
-
-
-def pack_chunks(header: str, blocks: list[str], limit: int = CHUNK_LIMIT,
-                 max_chunks: int = MAX_CHUNKS) -> list[str]:
-    """动态分片：份数由当日内容的数据量决定，但总份数不超过 max_chunks（默认 5）。
-
-    规则：
-    1. 按字节估算"最少需要几份"才能把每片压在平台单边上限 limit 内；
-    2. 实际份数 = min(需要份数, max_chunks) —— 绝不写死为 1/2/3；
-    3. 用均衡切分把块分配到这些份里，保持原顺序、绝不切断任何单条块；
-    4. 兜底：若因内容过大被 max_chunks 上限夹取后段数仍偏多，尾部自动合并
-       收敛到 max_chunks 份以内（此时单份可能超过 limit，属用户设定的硬上限场景）。
-    """
+def pack_chunks(header: str, blocks: list[str], limit: int = CHUNK_LIMIT) -> list[str]:
+    """按完整消息的 UTF-8 字节预算贪心分片，保留全部块、顺序和单条内容。"""
     if not blocks:
         return []
 
-    # 1) 估算需要的份数（含标题/页脚字节开销）
-    overhead = _padded_header_len(header)
-    content_bytes = sum(bytelen(b) + 2 for b in blocks)
-    needed = max(1, -(-(overhead + content_bytes) // limit))  # ceil 除法
-    count = min(needed, max_chunks)
-
-    # 2) 将块均衡切成 count 段（按累积字节体积封口，保持原顺序）
-    sizes = [bytelen(b) + 2 for b in blocks]
-    total = sum(sizes)
-    target = total / count  # 每段目标字节
+    # 片数最多等于块数，用它预留最长页码（包括两位数以上），不限制片数。
+    suffix = f"（{len(blocks)}/{len(blocks)}）" if len(blocks) > 1 else ""
+    budget = limit - bytelen(f"{header}{suffix}\n\n")
     chunks: list[list[str]] = []
     cur: list[str] = []
     cur_size = 0
-    remaining = count
-    for i, b in enumerate(blocks):
-        cur.append(b)
-        cur_size += sizes[i]
-        blocks_left = len(blocks) - (i + 1)
-        # 当前段达到平均目标、且后续还有足够块填满剩余段 -> 封口；
-        # remaining == 1 时（最后一段）不提前封口，由循环后的兜底收尾
-        if remaining > 1 and cur_size >= target and blocks_left >= (remaining - 1):
+    for i, b in enumerate(blocks, 1):
+        size = bytelen(b)
+        if size > budget:
+            raise RuntimeError(
+                f"第 {i} 个内容块 {size} 字节，超出单片正文预算 {budget}；"
+                "请缩短该条内容"
+            )
+        separator = 2 if cur else 0
+        if cur and cur_size + separator + size > budget:
             chunks.append(cur)
             cur, cur_size = [], 0
-            remaining -= 1
+            separator = 0
+        cur.append(b)
+        cur_size += separator + size
     if cur:
         chunks.append(cur)
-
-    # 3) 兜底合并，确保绝不超过 max_chunks 份
-    while len(chunks) > max_chunks:
-        last = chunks.pop()
-        if chunks:
-            chunks[-1] = chunks[-1] + last
-        else:
-            chunks.append(last)
 
     total_chunks = len(chunks)
     out = []
@@ -360,7 +321,7 @@ def dispatch(chunks: list[str], title: str) -> None:
         send_wecom(hook, c)
         log(f"[push] 企微第 {i}/{len(chunks)} 片已发送（{bytelen(c)} 字节）")
         if i < len(chunks):
-            time.sleep(1)  # 保证群内消息顺序，限流 20 条/分钟无压力
+            time.sleep(3)  # 片数可超过 20，间隔至少 3 秒以遵守 20 条/分钟限流
 
 
 def alert_failure(err: str) -> None:

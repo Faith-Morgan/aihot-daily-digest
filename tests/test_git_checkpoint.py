@@ -28,6 +28,8 @@ class GitCheckpointTests(unittest.TestCase):
             git(first, "commit", "-m", "initial")
             git(first, "remote", "add", "origin", str(remote))
             git(first, "push", "origin", "main")
+            (first / "unrelated.txt").write_text("existing staged work", encoding="utf-8")
+            git(first, "add", "unrelated.txt")
 
             def paths(checkout):
                 return patch.multiple(d, REPO_ROOT=checkout, STATE_DIR=checkout / "state",
@@ -47,6 +49,10 @@ class GitCheckpointTests(unittest.TestCase):
                     d.dispatch(plan["chunks"], plan["header"], plan)
 
             git(root, "clone", "--branch", "main", str(remote), str(second))
+            self.assertFalse((second / "unrelated.txt").exists())
+            self.assertEqual(subprocess.check_output(
+                ["git", "diff", "--cached", "--name-only"], cwd=first, text=True,
+            ).strip(), "unrelated.txt")
             git(second, "config", "user.name", "Checkpoint Test")
             git(second, "config", "user.email", "checkpoint@example.invalid")
             with patch.dict("os.environ", env), paths(second), \

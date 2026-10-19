@@ -182,9 +182,10 @@ def persist_git_state() -> None:
 
     if git("add", "--", "state/pushed_ids.json", "state/delivery.json"):
         raise RuntimeError("无法暂存发送进度，停止发送")
-    changed = git("diff", "--staged", "--quiet")
+    changed = git("diff", "--staged", "--quiet", "--", "state/pushed_ids.json", "state/delivery.json")
     if changed not in (0, 1) or (changed == 1 and git(
-        "commit", "-m", "chore: 保存日报发送进度 [skip ci]",
+        "commit", "--only", "-m", "chore: 保存日报发送进度 [skip ci]",
+        "--", "state/pushed_ids.json", "state/delivery.json",
     )):
         raise RuntimeError("无法提交发送进度，停止发送")
     for attempt in range(3):
@@ -483,7 +484,9 @@ def send_wecom(webhook: str, content: str, msgtype: str = "markdown") -> None:
             errcode = r.get("errcode")
             errmsg = str(r.get("errmsg", ""))
             # errcode=0 但带 warning 也不能记为成功。
-            if errcode == 0 and "warning" not in errmsg.lower():
+            if errcode == 0:
+                if "warning" in errmsg.lower():
+                    raise DeliveryUncertain("企微成功响应带 warning，请核对当前分片")
                 return
             raise RuntimeError(f"企微拒绝: errcode={errcode}")
 

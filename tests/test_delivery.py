@@ -44,6 +44,23 @@ class RetryTests(unittest.TestCase):
                 d.send_wecom("test-hook", "content")
         post.assert_called_once()
 
+    def test_warning_response_remains_uncertain(self):
+        with patch.object(d, "_post_json", return_value={"errcode": 0, "errmsg": "Warning: wrong json format."}):
+            with self.assertRaises(d.DeliveryUncertain):
+                d.send_wecom("test-hook", "content")
+
+    def test_safe_retry_does_not_start_after_strict_deadline(self):
+        error = urllib.error.HTTPError("https://example.invalid", 429, "limit", {}, None)
+        with patch.dict("os.environ", {"AIHOT_ENFORCE_WINDOW": "1"}), \
+                patch.object(d, "datetime") as clock, \
+                patch.object(d, "_post_json", side_effect=error) as post, \
+                patch.object(d.time, "sleep"):
+            clock.now.side_effect = [datetime(2026, 10, 20, 8, 34, 59, tzinfo=d.CST),
+                                    datetime(2026, 10, 20, 8, 35, 1, tzinfo=d.CST)]
+            with self.assertRaisesRegex(RuntimeError, "窗口"):
+                d.send_wecom("test-hook", "content")
+        post.assert_called_once()
+
     def test_http_429_obeys_retry_after(self):
         error = urllib.error.HTTPError("https://example.invalid", 429, "limit", {"Retry-After": "7"}, None)
         with patch.object(d, "_post_json", side_effect=[error, {"errcode": 0, "errmsg": "ok"}]) as post, \

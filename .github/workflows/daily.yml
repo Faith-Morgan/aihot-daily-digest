@@ -18,25 +18,29 @@ concurrency:
 
 jobs:
   push:
+    # 切换到独立服务器前，将仓库变量 DELIVERY_RUNNER 设为 external，避免双重发送。
+    if: vars.DELIVERY_RUNNER != 'external'
     runs-on: ubuntu-latest # 私有仓库计费倍率 x1，勿用 macOS/Windows
     timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 重跑时也读取最新发送进度，不使用旧 SHA 的去重状态。
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: 配置发送进度回写
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: 抓取并推送
         env:
           PUSH_CHANNEL: ${{ vars.PUSH_CHANNEL || 'wecom' }}
           WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
+          AIHOT_PERSIST_GIT: '1'
+          AIHOT_GIT_BRANCH: ${{ github.event.repository.default_branch }}
         # ubuntu-latest 预装 Python 3，脚本只用标准库，无需 setup-python / pip install
         run: python3 scripts/aihot_daily.py
 
-      - name: 回写去重状态
-        if: success()
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add state/pushed_ids.json
-          # 无变更时前半句成功，短路跳过 commit，不会让 workflow 报红
-          git diff --staged --quiet || git commit -m "chore: 更新推送记录 [skip ci]"
-          git push
+      # 脚本在每次发送前后持久化确认进度；回写失败即停止发送。

@@ -1,0 +1,26 @@
+[Unit]
+Description=AI HOT daily digest
+Wants=network-online.target
+After=network-online.target
+OnFailure=aihot-check.service
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+User=aihot
+Group=aihot
+WorkingDirectory=/opt/aihot-daily-digest
+EnvironmentFile=/etc/aihot-daily.env
+Environment=AIHOT_STATE_DIR=/var/lib/aihot-daily
+Environment=AIHOT_ENFORCE_WINDOW=1
+StateDirectory=aihot-daily
+ExecStart=/usr/bin/flock -n /var/lib/aihot-daily/delivery.lock /usr/bin/python3 scripts/aihot_daily.py
+TimeoutStartSec=240
+Restart=on-failure
+RestartSec=20
+RestartPreventExitStatus=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/aihot-daily

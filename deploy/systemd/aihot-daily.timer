@@ -1,0 +1,11 @@
+[Unit]
+Description=Run AI HOT daily at 08:30 UTC+8
+
+[Timer]
+OnCalendar=*-*-* 00:30:00 UTC
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=true
+
+[Install]
+WantedBy=timers.target

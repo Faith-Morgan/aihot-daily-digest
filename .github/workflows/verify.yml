@@ -1,0 +1,20 @@
+name: 离线回归验证
+
+on:
+  pull_request:
+  push:
+    branches: ['codex/**']
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: 验证分片、重试、持久化与恢复（全部离线）
+        run: python3 -m unittest discover -s tests -v
+      - name: 验证独立运行配置
+        run: systemd-analyze verify deploy/systemd/*.service deploy/systemd/*.timer

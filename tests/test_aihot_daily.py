@@ -1,6 +1,8 @@
 """离线分片回归测试，不请求 API、不发送消息、不改去重状态。"""
 
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 from scripts import aihot_daily as digest
@@ -8,6 +10,13 @@ from scripts import aihot_daily as digest
 
 class PackChunksTests(unittest.TestCase):
     header = "# AI 热点日报 2026-09-30"
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        p = patch.object(digest, "DELIVERY_FILE", Path(temp.name) / "delivery.json")
+        p.start()
+        self.addCleanup(p.stop)
 
     def test_uneven_blocks_fit_without_exceeding_bytes(self):
         # 旧均衡算法将前两块塞进一片，产生 4241 字节的消息。
@@ -79,10 +88,12 @@ class PackChunksTests(unittest.TestCase):
                 patch.object(digest, "load_pushed_ids", return_value=set()), \
                 patch.object(digest, "fetch_hot_topics", return_value=[]), \
                 patch.object(digest, "build_blocks", return_value=(self.header, blocks)), \
-                patch.object(digest, "dispatch") as send, \
+                patch.dict("os.environ", {"WECOM_WEBHOOK": "test-hook", "AIHOT_PERSIST_GIT": ""}), \
+                patch.object(digest, "send_wecom") as send, \
+                patch.object(digest.time, "sleep"), \
                 patch.object(digest, "save_pushed_ids") as save:
             self.assertEqual(digest.main(), 0)
-        self.assertEqual(len(send.call_args.args[0]), 7)
+        self.assertEqual(send.call_count, 7)
         save.assert_called_once_with(set(), [item["id"] for item in items])
 
     def test_dispatch_paces_more_than_twenty_chunks(self):

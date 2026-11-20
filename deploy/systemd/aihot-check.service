@@ -1,0 +1,19 @@
+[Unit]
+Description=Verify AI HOT daily delivery window
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=aihot
+Group=aihot
+WorkingDirectory=/opt/aihot-daily-digest
+EnvironmentFile=/etc/aihot-daily.env
+Environment=AIHOT_STATE_DIR=/var/lib/aihot-daily
+StateDirectory=aihot-daily
+ExecStart=/usr/bin/python3 scripts/aihot_daily.py --check
+TimeoutStartSec=90
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/var/lib/aihot-daily
